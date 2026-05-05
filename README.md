@@ -1,17 +1,23 @@
 # twmd: CLI twitter media downloader (without api key)
 forked from https://github.com/mmpx12/twitter-media-downloader
-
+```
 added -D --delay parameter (in seconds) between each fetch
 added -c --cur cursor parameter for retaining cursor for resuming on error
+```
 
 ## examples:
 download vidoes from USER_NAME at directory D:\Downloads\twmd while checking 3000 posts, at a delay of 30 seconds per attempt
+```sh
 twmd -u USER_NAME -o "D:\Downloads\twmd" -v -n 3000 -D 30
+```
 same as above but for 10000 posts and using cursor mode, returning cursor position as log after each attempt
+```sh
 twmd -u USER_NAME -o "D:\Downloads\twmd" -v -n 10000 -D 30 -c "0"
+```
 use the returned cursor string to resume at point where you stopped last time
+```sh
 twmd -u USER_NAME -o "D:\Downloads\twmd" -v -n 10000 -D 30 -c "ALKJFSFDJ-_-5AFAFAFAFSDFKSJFLSFKJSAFAAAA"
-
+```
 
 ## usage: 
 
