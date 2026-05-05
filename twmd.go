@@ -24,20 +24,20 @@ import (
 )
 
 var (
-	usr     string
-	format  string
-	proxy   string
-	update  bool
-	onlyrtw bool
-	onlymtw bool
-	vidz    bool
-	imgs    bool
-	urlOnly bool
-	version = "1.15.0"
-	scraper *twitterscraper.Scraper
-	client  *http.Client
-	size    = "orig"
-	datefmt = "2006-01-02"
+	usr      string
+	format   string
+	proxy    string
+	update   bool
+	onlyrtw  bool
+	onlymtw  bool
+	vidz     bool
+	imgs     bool
+	urlOnly  bool
+	version  = "1.15.0"
+	scraper  *twitterscraper.Scraper
+	client   *http.Client
+	size     = "orig"
+	datefmt  = "2006-01-02"
 )
 
 func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string, output string, dwn_type string) {
@@ -58,6 +58,9 @@ func download(wg *sync.WaitGroup, tweet interface{}, url string, filetype string
 		return
 	}
 	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return
+	}
 	req.Header.Add("User-Agent", "Mozilla/5.0 (X11; Linux x86_64)")
 	resp, err := client.Do(req)
 
@@ -248,7 +251,7 @@ func askPass() {
 		scraper.SetAuthToken(twitterscraper.AuthToken{Token: auth_token, CSRFToken: ct0})
 		if !scraper.IsLoggedIn() {
 			fmt.Println("Bad Cookies.")
-			askPass()
+			continue
 		}
 		cookies := scraper.GetCookies()
 		js, _ := json.Marshal(cookies)
@@ -270,7 +273,6 @@ func Login(useCookies bool) {
 			cookies := processCookieString(cookieStr)
 			scraper.SetCookies(cookies)
 
-			// Save cookies to file
 			js, _ := json.MarshalIndent(cookies, "", "  ")
 			f, _ := os.OpenFile("twmd_cookies.json", os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0666)
 			defer f.Close()
@@ -280,7 +282,7 @@ func Login(useCookies bool) {
 			var cookies []*http.Cookie
 			json.NewDecoder(f).Decode(&cookies)
 			scraper.SetCookies(cookies)
-			fmt.Println(scraper.IsLoggedIn())
+			fmt.Println("Is Logged In:", scraper.IsLoggedIn())
 		}
 	} else {
 		if _, err := os.Stat("twmd_cookies.json"); errors.Is(err, fs.ErrNotExist) {
@@ -368,23 +370,20 @@ func getFormat(tweet interface{}) string {
 	}
 
 	formatNew = format
-
 	for key, val := range replacer {
 		formatNew = strings.ReplaceAll(formatNew, key, val)
 	}
-
 	return formatNew
 }
 
 func sanitizeText(text string, regex *regexp.Regexp, maxLen int) string {
 	cleaned := ""
-	remaining := maxLen
 	for _, char := range text {
 		charStr := string(char)
 		if regex.MatchString(charStr) {
 			charStr = "_"
 		}
-		if utf8.RuneCountInString(cleaned)+utf8.RuneCountInString(charStr) > remaining {
+		if utf8.RuneCountInString(cleaned)+utf8.RuneCountInString(charStr) > maxLen {
 			break
 		}
 		cleaned += charStr
@@ -393,7 +392,7 @@ func sanitizeText(text string, regex *regexp.Regexp, maxLen int) string {
 }
 
 func main() {
-	var nbr, single, output string
+	var nbr, single, output, delay, cur string
 	var retweet, all, printversion, nologo, login, useCookies bool
 	op := optionparser.NewOptionParser()
 	op.Banner = "twmd: Apiless twitter media downloader\n\nUsage:"
@@ -410,19 +409,15 @@ func main() {
 	op.On("-s", "--size SIZE", "Choose size between small|normal|large (default large)", &size)
 	op.On("-U", "--update", "Download missing tweet only", &update)
 	op.On("-o", "--output DIR", "Output directory", &output)
-	op.On("-f", "--file-format FORMAT", "Formatted name for the downloaded file, {DATE} {USERNAME} {NAME} {TITLE} {ID}", &format)
-	op.On("-d", "--date-format FORMAT", "Apply custom date format. (https://go.dev/src/time/format.go)", &datefmt)
+	op.On("-f", "--file-format FORMAT", "Formatted name for the downloaded file", &format)
+	op.On("-d", "--date-format FORMAT", "Apply custom date format", &datefmt)
 	op.On("-L", "--login", "Login (needed for NSFW tweets)", &login)
 	op.On("-C", "--cookies", "Use cookies for authentication", &useCookies)
 	op.On("-p", "--proxy PROXY", "Use proxy (proto://ip:port)", &proxy)
 	op.On("-V", "--version", "Print version and exit", &printversion)
 	op.On("-B", "--no-banner", "Don't print banner", &nologo)
-	op.Exemple("twmd -u Spraytrains -o ~/Downloads -a -r -n 300")
-	op.Exemple("twmd -u Spraytrains -o ~/Downloads -R -U -n 300")
-	op.Exemple("twmd --proxy socks5://127.0.0.1:9050 -t 156170319961391104")
-	op.Exemple("twmd -t 156170319961391104")
-	op.Exemple("twmd -t 156170319961391104 -f \"{DATE} {ID}\"")
-	op.Exemple("twmd -t 156170319961391104 -f \"{DATE} {ID}\" -d \"2006-01-02_15-04-05\"")
+	op.On("-D", "--delay SECOND(S)", "Use specified seconds delay", &delay)
+	op.On("-c", "--cur CURSOR position", "Use for specifying starting point", &cur)
 	op.Parse()
 
 	if printversion {
@@ -441,22 +436,11 @@ func main() {
 		imgs = true
 	}
 	if !vidz && !imgs && single == "" {
-		fmt.Println("You must specify what to download. (-i --img) for images, (-v --video) for videos or (-a --all) for both")
-		op.Help()
-		os.Exit(1)
-	}
-	var re = regexp.MustCompile(`{ID}|{DATE}|{NAME}|{USERNAME}|{TITLE}`)
-	if format != "" && !re.MatchString(format) {
-		fmt.Println("You must specify a format (-f --format)")
+		fmt.Println("You must specify what to download.")
 		op.Help()
 		os.Exit(1)
 	}
 
-	re = regexp.MustCompile("small|normal|large")
-	if !re.MatchString(size) && size != "orig" {
-		print("Error in size, setting up to normal\n")
-		size = ""
-	}
 	if size == "large" {
 		size = "orig"
 	}
@@ -464,27 +448,22 @@ func main() {
 	client = &http.Client{
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
-				Timeout: time.Duration(5) * time.Second,
+				Timeout: 5 * time.Second,
 			}).DialContext,
-			TLSHandshakeTimeout:   time.Duration(5) * time.Second,
+			TLSHandshakeTimeout:   5 * time.Second,
 			ResponseHeaderTimeout: 5 * time.Second,
 			DisableKeepAlives:     true,
 		},
 	}
 	if proxy != "" {
 		proxyURL, _ := URL.Parse(proxy)
-		client = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyURL(proxyURL),
-			},
-		}
+		client.Transport.(*http.Transport).Proxy = http.ProxyURL(proxyURL)
 	}
 
 	scraper = twitterscraper.New()
 	scraper.WithReplies(true)
 	scraper.SetProxy(proxy)
 
-	// Modified login handling
 	if login || useCookies {
 		Login(useCookies)
 	}
@@ -515,26 +494,78 @@ func main() {
 	nbrs, _ := strconv.Atoi(nbr)
 	wg := sync.WaitGroup{}
 
-	var tweets <-chan *twitterscraper.TweetResult
-	if onlymtw {
-		tweets = scraper.GetMediaTweets(context.Background(), usr, nbrs)
-	} else {
-		tweets = scraper.GetTweets(context.Background(), usr, nbrs)
+	if delay == "" {
+		delay = "0"
 	}
+	delay64, _ := strconv.ParseInt(delay, 10, 64)
+	scraper.WithDelay(delay64)
 
-	for tweet := range tweets {
-		if tweet.Error != nil {
-			fmt.Println(tweet.Error)
-			os.Exit(1)
+	if cur == "" {
+		fmt.Println("running in standard mode...")
+		var tweets <-chan *twitterscraper.TweetResult
+		if onlymtw {
+			tweets = scraper.GetMediaTweets(context.Background(), usr, nbrs)
+		} else {
+			tweets = scraper.GetTweets(context.Background(), usr, nbrs)
 		}
-		if vidz {
-			wg.Add(1)
-			go videoUser(&wg, tweet, output, retweet)
+
+		for tweet := range tweets {
+			if tweet.Error != nil {
+				fmt.Println(tweet.Error)
+				os.Exit(1)
+			}
+			if vidz {
+				wg.Add(1)
+				go videoUser(&wg, tweet, output, retweet)
+			}
+			if imgs {
+				wg.Add(1)
+				go photoUser(&wg, tweet, output, retweet)
+			}
 		}
-		if imgs {
-			wg.Add(1)
-			go photoUser(&wg, tweet, output, retweet)
+		wg.Wait()
+	} else {
+		// Manual pagination loop
+		fmt.Println("running in cursor mode...")
+		for {
+			var tweetsSlice []*twitterscraper.Tweet
+			var nextCursor string
+			var err error
+
+			if onlymtw {
+				tweetsSlice, nextCursor, err = scraper.FetchMediaTweets(usr, nbrs, cur)
+			} else {
+				tweetsSlice, nextCursor, err = scraper.FetchTweets(usr, nbrs, cur)
+			}
+
+			if err != nil {
+				fmt.Printf("Error: %v at cursor %s\n", err, cur)
+				break
+			}
+
+			for _, tweet := range tweetsSlice {
+				// Convert *Tweet to *TweetResult for helpers
+				tr := &twitterscraper.TweetResult{Tweet: *tweet}
+				fmt.Printf("Found tweet: %s\n", tweet.ID)
+				if vidz {
+					wg.Add(1)
+					go videoUser(&wg, tr, output, retweet)
+				}
+				if imgs {
+					wg.Add(1)
+					go photoUser(&wg, tr, output, retweet)
+				}
+			}
+			
+			fmt.Printf("\nNext Cursor to resume from: %s\n", nextCursor)
+
+			if nextCursor == "" {
+				fmt.Println("Reached end of tweets.")
+				break
+			}
+			cur = nextCursor
+			time.Sleep(time.Duration(delay64) * time.Second)
 		}
+		wg.Wait()
 	}
-	wg.Wait()
 }
