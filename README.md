@@ -1,4 +1,4 @@
-# twmd: CLI twitter media downloader (without api key)
+# twmd fix, added delay and resume features
 forked from https://github.com/mmpx12/twitter-media-downloader
 ```
 added -D --delay parameter (in seconds) between each fetch
